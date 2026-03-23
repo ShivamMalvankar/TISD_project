@@ -1,0 +1,955 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>EchoChamberX – Bias & Polarization Detection</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #060910; --surface: #0D1117; --surface2: #111827;
+    --border: rgba(255,255,255,0.06); --border2: rgba(255,255,255,0.12);
+    --red: #FF3B5C; --amber: #F59E0B; --green: #10D876; --blue: #3B82F6;
+    --muted: #4B5563; --text: #E4E8F0; --dim: #6B7280;
+    --font-head: 'Syne', sans-serif; --font-mono: 'JetBrains Mono', monospace;
+  }
+  html { scroll-behavior: smooth; }
+  body { background: var(--bg); color: var(--text); font-family: var(--font-mono); min-height: 100vh; }
+  .scanlines {
+    background-image: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.15) 2px, rgba(0,0,0,0.15) 4px);
+    pointer-events: none; position: fixed; inset: 0; z-index: 9999; opacity: 0.2;
+  }
+  @keyframes fadeUp { from { opacity:0; transform:translateY(18px); } to { opacity:1; transform:translateY(0); } }
+  @keyframes fadeIn { from { opacity:0; } to { opacity:1; } }
+  @keyframes ticker { 0% { transform:translateX(0); } 100% { transform:translateX(-50%); } }
+  @keyframes spin { from { transform:rotate(0deg); } to { transform:rotate(360deg); } }
+  @keyframes blink { 0%,100% { opacity:1; } 50% { opacity:0.2; } }
+  @keyframes radar { from { transform:rotate(0deg); } to { transform:rotate(360deg); } }
+  @keyframes stepIn { from { opacity:0; transform:translateX(-8px); } to { opacity:1; transform:translateX(0); } }
+  @keyframes barGrow { from { width:0; } to { width:var(--w); } }
+  @keyframes pulse { 0%,100% { box-shadow:0 0 8px var(--red); } 50% { box-shadow:0 0 20px var(--red); } }
+
+  /* ── TICKER ── */
+  .ticker-wrap { overflow:hidden; white-space:nowrap; }
+  .ticker-inner { display:inline-flex; animation:ticker 28s linear infinite; }
+
+  /* ── CARD ── */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    transition: border-color 0.25s, box-shadow 0.25s;
+  }
+  .card:hover { border-color: var(--border2); box-shadow: 0 0 32px rgba(255,59,92,0.06); }
+  .afu { animation: fadeUp 0.5s ease both; }
+
+  ::-webkit-scrollbar { width:3px; }
+  ::-webkit-scrollbar-thumb { background:#1f2937; border-radius:4px; }
+  input::placeholder { color: var(--muted); letter-spacing:0.04em; }
+  input:focus { outline:none; }
+
+  /* ── HEADER ── */
+  #header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 28px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(0,0,0,0.5);
+    backdrop-filter: blur(16px);
+    position: sticky; top:0; z-index:100;
+  }
+  .header-logo { display:flex; align-items:center; gap:14; }
+  .logo-svg { position:relative; width:38px; height:38px; flex-shrink:0; }
+  .logo-dot {
+    position:absolute; top:-2px; right:-2px; width:8px; height:8px;
+    border-radius:50%; background:var(--red); box-shadow:0 0 8px var(--red);
+    animation: blink 1.4s ease infinite;
+  }
+  .logo-text-main { font-family:var(--font-head); font-weight:800; font-size:17px; letter-spacing:-0.02em; color:#fff; line-height:1; }
+  .logo-text-main span { color:var(--red); }
+  .logo-sub { font-family:var(--font-mono); font-size:9px; color:var(--dim); letter-spacing:0.18em; margin-top:3px; }
+  .header-right { display:flex; align-items:center; gap:24px; }
+  .hstat { text-align:center; }
+  .hstat-key { font-family:var(--font-mono); font-size:8px; color:var(--dim); letter-spacing:0.12em; margin-bottom:2px; }
+  .hstat-val { font-family:var(--font-mono); font-size:10px; font-weight:700; letter-spacing:0.08em; }
+  #clock { font-family:var(--font-mono); font-size:10px; color:var(--dim); background:var(--surface); border:1px solid var(--border); padding:5px 11px; border-radius:6px; }
+
+  /* ── SEARCH ── */
+  #search-wrap { padding:28px 28px 0; }
+  .search-form { display:flex; gap:10; }
+  .search-input-wrap { flex:1; position:relative; }
+  .search-icon { position:absolute; left:14px; top:50%; transform:translateY(-50%); opacity:0.35; pointer-events:none; }
+  #search-input {
+    width:100%; background:var(--surface); border:1px solid var(--border2);
+    color:var(--text); font-family:var(--font-mono); font-size:12px; letter-spacing:0.04em;
+    padding:13px 16px 13px 42px; border-radius:8px; transition:border-color 0.2s, box-shadow 0.2s;
+  }
+  #search-input:focus { border-color:var(--red); box-shadow:0 0 20px rgba(255,59,92,0.14); }
+  #analyze-btn {
+    font-family:var(--font-head); font-weight:700; font-size:12px; letter-spacing:0.1em;
+    text-transform:uppercase; padding:0 26px; border-radius:8px; border:none; cursor:pointer;
+    background:var(--red); color:#fff; box-shadow:0 0 20px rgba(255,59,92,0.4);
+    transition:all 0.2s; white-space:nowrap; display:flex; align-items:center; gap:8px;
+  }
+  #analyze-btn:disabled { background:rgba(255,59,92,0.12); color:var(--red); box-shadow:none; opacity:0.7; cursor:not-allowed; }
+  .spin { animation: spin 0.7s linear infinite; }
+
+  /* ── TAG / BADGE helpers ── */
+  .tag {
+    font-family:var(--font-mono); font-size:9px; letter-spacing:0.16em;
+    text-transform:uppercase; color:var(--dim); border:1px solid var(--border2);
+    padding:2px 7px; border-radius:4px;
+  }
+  .badge {
+    font-family:var(--font-mono); font-size:9px; letter-spacing:0.1em;
+    text-transform:uppercase; padding:3px 9px; border-radius:4px; white-space:nowrap;
+  }
+  .dim { font-family:var(--font-mono); font-size:10px; letter-spacing:0.12em; text-transform:uppercase; color:var(--dim); }
+  .shead { display:flex; align-items:center; gap:10; margin-bottom:18px; }
+  .shead-title { font-family:var(--font-head); font-weight:700; font-size:13px; color:var(--text); letter-spacing:0.05em; text-transform:uppercase; }
+
+  /* ── TICKER ── */
+  #ticker-bar {
+    border-top:1px solid var(--border); border-bottom:1px solid var(--border);
+    padding:5px 0; margin-top:22px; background:rgba(255,59,92,0.03);
+  }
+  .ticker-text { font-family:var(--font-mono); font-size:10px; color:var(--red); letter-spacing:0.09em; }
+
+  /* ── ACTIVE BANNER ── */
+  #active-banner {
+    margin:18px 28px 0; padding:9px 16px;
+    background:rgba(255,59,92,0.05); border:1px solid rgba(255,59,92,0.18);
+    border-radius:8px; display:flex; align-items:center; gap:12;
+  }
+  .active-dot {
+    width:7px; height:7px; border-radius:50%; background:var(--red);
+    box-shadow:0 0 8px var(--red); animation:blink 1.2s ease infinite; flex-shrink:0;
+  }
+  .active-text { font-family:var(--font-mono); font-size:11px; color:var(--dim); }
+  .active-text strong { color:var(--text); font-weight:700; }
+  .active-text .crit { color:var(--red); }
+
+  /* ── STATS ROW ── */
+  #stats-row { display:grid; grid-template-columns:repeat(6,1fr); gap:10; padding:14px 28px 0; }
+  .stat-card { padding:14px 16px; }
+  .stat-val { font-family:var(--font-head); font-weight:800; font-size:24px; line-height:1; margin-bottom:5px; }
+  .stat-unit { color:rgba(255,255,255,0.18); font-size:8px; }
+
+  /* ── GRID ROWS ── */
+  .grid-row-3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:10; padding:10px 28px 0; }
+  .grid-row-2 { display:grid; grid-template-columns:1.7fr 1fr; gap:10; padding:10px 28px 0; }
+  .grid-row-1 { padding:10px 28px 0; }
+
+  /* ── POLARIZATION CARD ── */
+  #polarization-card { padding:26px; display:flex; flex-direction:column; align-items:center; }
+  .gauge-wrap { position:relative; width:180px; height:180px; }
+  .gauge-center {
+    position:absolute; inset:0; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; padding-bottom:10px; gap:2px;
+  }
+  #gauge-score {
+    font-family:var(--font-head); font-weight:800; font-size:48px; line-height:1;
+  }
+  #gauge-label { font-family:var(--font-mono); font-size:9px; letter-spacing:0.22em; }
+  .gauge-scale { width:100%; margin-top:8px; }
+  .gauge-scale-labels { display:flex; justify-content:space-between; margin-bottom:5px; }
+  .scale-bar-bg { height:3px; background:rgba(255,255,255,0.06); border-radius:2px; overflow:hidden; }
+  #scale-fill {
+    height:100%; border-radius:2px;
+    background:linear-gradient(90deg,var(--green),var(--amber),var(--red));
+    animation:barGrow 1.2s cubic-bezier(0.34,1.2,0.64,1) both;
+  }
+
+  /* ── CHARTS ── */
+  .chart-card { padding:26px; }
+  canvas { display:block; }
+
+  /* ── INSIGHT ── */
+  #insight-card {
+    padding:26px; border-left:3px solid var(--red);
+    background:rgba(255,59,92,0.03);
+  }
+  .insight-inner { display:flex; gap:14; }
+  .insight-icon {
+    flex-shrink:0; width:38px; height:38px; border-radius:8px;
+    background:rgba(255,59,92,0.1); border:1px solid rgba(255,59,92,0.2);
+    display:flex; align-items:center; justify-content:center;
+  }
+  #insight-text { font-family:var(--font-mono); font-size:12px; color:rgba(228,232,240,0.82); line-height:1.8; letter-spacing:0.02em; }
+
+  /* ── ARTICLES ── */
+  #articles-card { padding:26px; }
+  .articles-thead {
+    display:grid; grid-template-columns:1fr 120px 90px 80px 60px;
+    gap:8px; padding:6px 10px; border-bottom:1px solid var(--border); margin-bottom:6px;
+  }
+  .article-row {
+    display:grid; grid-template-columns:1fr 120px 90px 80px 60px;
+    gap:8px; padding:11px 10px; border-radius:7px; align-items:center;
+    background:rgba(255,255,255,0.014); border:1px solid transparent;
+    cursor:pointer; transition:all 0.18s;
+  }
+  .article-row:hover { background:rgba(255,255,255,0.04); border-color:var(--border2); }
+  .article-title { font-family:var(--font-mono); font-size:12px; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .article-idx { color:var(--dim); margin-right:8px; font-size:10px; }
+  .article-source { font-family:var(--font-mono); font-size:11px; color:var(--dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+  /* ── EMPTY STATE ── */
+  #empty-state { display:flex; flex-direction:column; align-items:center; justify-content:center; padding:64px 28px 48px; gap:32; text-align:center; }
+  .empty-title { font-family:var(--font-head); font-weight:800; font-size:20px; color:#fff; letter-spacing:-0.01em; margin-bottom:10px; }
+  .empty-sub { font-family:var(--font-mono); font-size:12px; color:var(--dim); max-width:420px; line-height:1.8; display:block; }
+  .examples-grid { display:flex; gap:8px; flex-wrap:wrap; justify-content:center; }
+  .example-btn {
+    font-family:var(--font-mono); font-size:11px; letter-spacing:0.06em;
+    padding:6px 14px; border-radius:6px; background:rgba(255,255,255,0.04);
+    border:1px solid var(--border); color:var(--dim); cursor:pointer; transition:all 0.18s;
+  }
+  .example-btn:hover { background:rgba(255,59,92,0.1); border-color:rgba(255,59,92,0.35); color:var(--red); }
+
+  /* ── LOADING STATE ── */
+  #loading-state { display:flex; flex-direction:column; align-items:center; justify-content:center; padding:72px 28px; gap:36; }
+  .radar-wrap { position:relative; width:130px; height:130px; }
+  .radar-static { position:absolute; }
+  .radar-sweep { position:absolute; animation:radar 1.8s linear infinite; }
+  .radar-dot { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; }
+  .radar-dot-inner { width:9px; height:9px; border-radius:50%; background:var(--red); box-shadow:0 0 14px var(--red); animation:blink 0.6s ease infinite; }
+  .loading-steps { display:flex; flex-direction:column; gap:10; width:100%; max-width:340px; }
+  .loading-step { display:flex; align-items:center; gap:10; font-family:var(--font-mono); font-size:11px; transition:color 0.3s; }
+  .step-icon { font-size:10px; }
+
+  /* ── FOOTER ── */
+  #footer { margin:28px 28px 0; padding:14px 0; border-top:1px solid var(--border); display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px; }
+
+  /* ── RESPONSIVE ── */
+  @media (max-width: 1024px) {
+    #stats-row { grid-template-columns:repeat(3,1fr); }
+    .grid-row-3 { grid-template-columns:1fr 1fr; }
+    .grid-row-2 { grid-template-columns:1fr; }
+  }
+  @media (max-width: 640px) {
+    #header { padding:12px 16px; }
+    #search-wrap { padding:16px 16px 0; }
+    #stats-row { grid-template-columns:repeat(2,1fr); padding:14px 16px 0; }
+    .grid-row-3, .grid-row-2 { grid-template-columns:1fr; padding:10px 16px 0; }
+    .grid-row-1 { padding:10px 16px 0; }
+    .articles-thead, .article-row { grid-template-columns:1fr 80px 70px; }
+    .articles-thead .col-bias, .article-row .col-bias,
+    .articles-thead .col-time, .article-row .col-time { display:none; }
+    #active-banner { margin:14px 16px 0; }
+    #footer { padding:14px 16px; margin:28px 0 0; }
+    .header-right { gap:12px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Scanlines overlay -->
+<div class="scanlines"></div>
+
+<!-- ── HEADER ── -->
+<header id="header">
+  <div class="header-logo">
+    <div class="logo-svg">
+      <svg width="38" height="38" viewBox="0 0 38 38">
+        <circle cx="19" cy="19" r="17" fill="none" stroke="var(--red)" stroke-width="1.5"/>
+        <circle cx="19" cy="19" r="10" fill="none" stroke="rgba(255,59,92,0.35)" stroke-width="1" stroke-dasharray="3 2"/>
+        <circle cx="19" cy="19" r="4" fill="var(--red)"/>
+        <line x1="19" y1="2" x2="19" y2="9" stroke="var(--red)" stroke-width="1.5"/>
+        <line x1="19" y1="29" x2="19" y2="36" stroke="var(--red)" stroke-width="1.5"/>
+        <line x1="2" y1="19" x2="9" y2="19" stroke="var(--red)" stroke-width="1.5"/>
+        <line x1="29" y1="19" x2="36" y2="19" stroke="var(--red)" stroke-width="1.5"/>
+      </svg>
+      <span class="logo-dot"></span>
+    </div>
+    <div>
+      <div class="logo-text-main">ECHO<span>CHAMBER</span>X</div>
+      <div class="logo-sub">BIAS · POLARIZATION · DETECTION</div>
+    </div>
+  </div>
+  <div class="header-right">
+    <div class="hstat"><div class="hstat-key">ENGINE</div><div class="hstat-val" style="color:var(--green)">ONLINE</div></div>
+    <div class="hstat"><div class="hstat-key">FEED</div><div class="hstat-val" style="color:var(--amber)">LIVE</div></div>
+    <div class="hstat"><div class="hstat-key">API</div><div class="hstat-val" style="color:var(--blue)">v2.4</div></div>
+    <div id="clock">--:--:-- UTC</div>
+  </div>
+</header>
+
+<!-- ── SEARCH ── -->
+<div id="search-wrap">
+  <div class="search-form">
+    <div class="search-input-wrap">
+      <svg class="search-icon" width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+      </svg>
+      <input id="search-input" type="text" placeholder="Enter topic, event, or keyword for analysis..." />
+    </div>
+    <button id="analyze-btn" type="button">ANALYZE →</button>
+  </div>
+</div>
+
+<!-- ── MAIN CONTENT AREA ── -->
+<div id="main-content">
+
+  <!-- EMPTY STATE -->
+  <div id="empty-state">
+    <div style="position:relative;width:180px;height:180px;opacity:0.7">
+      <svg width="180" height="180" viewBox="0 0 180 180">
+        <line x1="0" y1="0" x2="0" y2="180" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>
+        <line x1="45" y1="0" x2="45" y2="180" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>
+        <line x1="90" y1="0" x2="90" y2="180" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>
+        <line x1="135" y1="0" x2="135" y2="180" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>
+        <line x1="0" y1="45" x2="180" y2="45" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>
+        <line x1="0" y1="90" x2="180" y2="90" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>
+        <line x1="0" y1="135" x2="180" y2="135" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>
+        <circle cx="90" cy="90" r="65" fill="none" stroke="rgba(255,59,92,0.12)" stroke-width="1" stroke-dasharray="4 4"/>
+        <circle cx="90" cy="90" r="40" fill="none" stroke="rgba(255,59,92,0.08)" stroke-width="1"/>
+        <circle cx="90" cy="90" r="6" fill="rgba(255,59,92,0.18)" stroke="var(--red)" stroke-width="1.5"/>
+        <circle cx="38" cy="52" r="3" fill="var(--red)" opacity="0.3"/>
+        <circle cx="152" cy="68" r="3" fill="var(--red)" opacity="0.4"/>
+        <circle cx="70" cy="148" r="3" fill="var(--red)" opacity="0.5"/>
+        <circle cx="136" cy="136" r="3" fill="var(--red)" opacity="0.6"/>
+        <circle cx="50" cy="95" r="3" fill="var(--red)" opacity="0.7"/>
+        <line x1="90" y1="90" x2="38" y2="52" stroke="rgba(255,59,92,0.15)" stroke-width="1"/>
+        <line x1="90" y1="90" x2="152" y2="68" stroke="rgba(255,59,92,0.12)" stroke-width="1"/>
+        <line x1="90" y1="90" x2="70" y2="148" stroke="rgba(255,59,92,0.1)" stroke-width="1"/>
+      </svg>
+    </div>
+    <div>
+      <div class="empty-title">NO TOPIC LOADED</div>
+      <span class="empty-sub">Enter any topic, news event, or keyword above to begin<br/>bias and polarization analysis across live media sources.</span>
+    </div>
+    <div>
+      <div class="dim" style="display:block;margin-bottom:12px">SUGGESTED TOPICS</div>
+      <div class="examples-grid" id="examples-grid"></div>
+    </div>
+  </div>
+
+  <!-- LOADING STATE (hidden initially) -->
+  <div id="loading-state" style="display:none">
+    <div class="radar-wrap">
+      <svg class="radar-static" width="130" height="130" viewBox="0 0 130 130">
+        <circle cx="65" cy="65" r="60" fill="none" stroke="rgba(255,59,92,0.1)" stroke-width="1"/>
+        <circle cx="65" cy="65" r="42" fill="none" stroke="rgba(255,59,92,0.1)" stroke-width="1"/>
+        <circle cx="65" cy="65" r="26" fill="none" stroke="rgba(255,59,92,0.1)" stroke-width="1"/>
+        <line x1="5" y1="65" x2="125" y2="65" stroke="rgba(255,59,92,0.07)" stroke-width="1"/>
+        <line x1="65" y1="5" x2="65" y2="125" stroke="rgba(255,59,92,0.07)" stroke-width="1"/>
+      </svg>
+      <svg class="radar-sweep" width="130" height="130" viewBox="0 0 130 130">
+        <defs>
+          <radialGradient id="sw">
+            <stop offset="0%" stop-color="var(--red)" stop-opacity="0.5"/>
+            <stop offset="100%" stop-color="var(--red)" stop-opacity="0"/>
+          </radialGradient>
+        </defs>
+        <path d="M65 65 L125 65 A60 60 0 0 0 65 5 Z" fill="url(#sw)"/>
+        <line x1="65" y1="65" x2="125" y2="65" stroke="var(--red)" stroke-width="1.5"/>
+      </svg>
+      <div class="radar-dot"><div class="radar-dot-inner"></div></div>
+    </div>
+    <div style="text-align:center">
+      <div style="font-family:var(--font-head);font-weight:800;font-size:18px;color:#fff;letter-spacing:0.03em;margin-bottom:6px">
+        ANALYZING <span id="loading-topic" style="color:var(--red)"></span>
+      </div>
+      <div class="dim">SCANNING MEDIA VECTORS</div>
+    </div>
+    <div class="loading-steps" id="loading-steps"></div>
+  </div>
+
+  <!-- RESULTS (hidden initially) -->
+  <div id="results" style="display:none;padding-bottom:52px">
+
+    <!-- Ticker -->
+    <div id="ticker-bar">
+      <div class="ticker-wrap">
+        <div class="ticker-inner" id="ticker-inner"></div>
+      </div>
+    </div>
+
+    <!-- Active banner -->
+    <div id="active-banner">
+      <span class="active-dot"></span>
+      <span class="active-text" id="active-text"></span>
+    </div>
+
+    <!-- Stats row -->
+    <div id="stats-row"></div>
+
+    <!-- Row 1: gauge + pie + bar -->
+    <div class="grid-row-3">
+      <!-- Polarization Card -->
+      <div class="card afu chart-card" id="polarization-card" style="animation-delay:0.04s;display:flex;flex-direction:column;align-items:center;padding:26px">
+        <div class="shead">
+          <span class="tag">01</span>
+          <span class="shead-title">Polarization Score</span>
+        </div>
+        <div class="gauge-wrap">
+          <svg id="gauge-svg" width="180" height="184" viewBox="0 0 180 184"></svg>
+          <div class="gauge-center">
+            <div id="gauge-score"></div>
+            <div id="gauge-label"></div>
+          </div>
+        </div>
+        <div class="gauge-scale" style="width:100%;margin-top:8px">
+          <div class="gauge-scale-labels" id="gauge-scale-labels"></div>
+          <div class="scale-bar-bg">
+            <div id="scale-fill"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Sentiment Chart -->
+      <div class="card afu chart-card" style="animation-delay:0.08s;padding:26px">
+        <div class="shead">
+          <span class="tag">02</span>
+          <span class="shead-title">Sentiment Distribution</span>
+        </div>
+        <div style="height:188px;display:flex;align-items:center;justify-content:center">
+          <canvas id="sentiment-chart"></canvas>
+        </div>
+        <div id="sentiment-legend" style="display:flex;justify-content:center;gap:18px;margin-top:6px"></div>
+      </div>
+
+      <!-- Bias Chart -->
+      <div class="card afu chart-card" style="animation-delay:0.12s;padding:26px">
+        <div class="shead">
+          <span class="tag">03</span>
+          <span class="shead-title">Bias Distribution</span>
+        </div>
+        <div style="height:188px">
+          <canvas id="bias-chart"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- Row 2: trend + insight -->
+    <div class="grid-row-2">
+      <!-- Trend Chart -->
+      <div class="card afu chart-card" style="animation-delay:0.16s;padding:26px">
+        <div class="shead">
+          <span class="tag">04</span>
+          <span class="shead-title">Polarization Trend</span>
+        </div>
+        <div style="height:188px">
+          <canvas id="trend-chart"></canvas>
+        </div>
+      </div>
+
+      <!-- Insight Box -->
+      <div class="card afu" id="insight-card" style="animation-delay:0.2s">
+        <div class="shead">
+          <span class="tag">05</span>
+          <span class="shead-title">AI Insight Summary</span>
+        </div>
+        <div class="insight-inner">
+          <div class="insight-icon">
+            <svg width="17" height="17" fill="none" stroke="var(--red)" stroke-width="1.7" viewBox="0 0 24 24" stroke-linecap="round">
+              <path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
+            </svg>
+          </div>
+          <p id="insight-text"></p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Row 3: articles -->
+    <div class="grid-row-1">
+      <div class="card afu" id="articles-card" style="animation-delay:0.24s;padding:26px">
+        <div class="shead">
+          <span class="tag">06</span>
+          <span class="shead-title">Analyzed Article Feed</span>
+        </div>
+        <div class="articles-thead">
+          <span class="dim">HEADLINE</span>
+          <span class="dim">SOURCE</span>
+          <span class="dim">SENTIMENT</span>
+          <span class="dim col-bias">BIAS</span>
+          <span class="dim col-time">TIME</span>
+        </div>
+        <div id="articles-list" style="display:flex;flex-direction:column;gap:4px"></div>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div id="footer">
+      <span class="dim">ECHOCHAMBERX v2.4.1 · BIAS & POLARIZATION DETECTION ENGINE</span>
+      <span class="dim">DATA IS SIMULATED FOR DEMONSTRATION PURPOSES</span>
+    </div>
+  </div>
+
+</div><!-- /main-content -->
+
+<script>
+/* ─────────────────────────────────────────────
+   MOCK DATA
+───────────────────────────────────────────── */
+const MOCK = {
+  polarization_score: 78,
+  sentiment: { positive: 30, negative: 50, neutral: 20 },
+  bias: { pro: 40, anti: 45, neutral: 15 },
+  trend: [
+    { time: "09:00", score: 22 },
+    { time: "10:00", score: 40 },
+    { time: "11:00", score: 55 },
+    { time: "12:00", score: 78 },
+    { time: "13:00", score: 74 },
+    { time: "14:00", score: 82 },
+  ],
+  articles: [
+    { id: 1, title: "Tensions rise over policy debate as factions clash online", source: "The Sentinel", sentiment: "negative", bias: "anti", time: "2m ago" },
+    { id: 2, title: "Supporters rally behind sweeping new reform package", source: "Tribune Media", sentiment: "positive", bias: "pro", time: "14m ago" },
+    { id: 3, title: "Analysts warn of deepening divisions in public opinion", source: "The Observer", sentiment: "negative", bias: "anti", time: "31m ago" },
+    { id: 4, title: "New data shows shifting attitudes among key demographics", source: "Pulse Daily", sentiment: "neutral", bias: "neutral", time: "1h ago" },
+  ],
+  insight: "Extreme divergence detected. Anti-bias narratives dominate at 45% with a 38-point surge in the last 3 hours — a hallmark echo-chamber acceleration pattern. Cross-reference centrist and international sources immediately. Confidence: 94%.",
+};
+
+/* ─────────────────────────────────────────────
+   HELPERS
+───────────────────────────────────────────── */
+const scoreColor = s => s < 30 ? "var(--green)" : s <= 70 ? "var(--amber)" : "var(--red)";
+const scoreColorHex = s => s < 30 ? "#10D876" : s <= 70 ? "#F59E0B" : "#FF3B5C";
+const scoreLabel = s => s < 30 ? "LOW RISK" : s <= 70 ? "MODERATE" : "CRITICAL";
+
+const sentStyle = {
+  positive: { bg:"rgba(16,216,118,0.08)", color:"#10D876", border:"rgba(16,216,118,0.22)" },
+  negative: { bg:"rgba(255,59,92,0.08)",  color:"#FF3B5C", border:"rgba(255,59,92,0.22)" },
+  neutral:  { bg:"rgba(245,158,11,0.08)", color:"#F59E0B", border:"rgba(245,158,11,0.22)" },
+};
+const biasStyle = {
+  pro:     { bg:"rgba(59,130,246,0.08)", color:"#3B82F6", border:"rgba(59,130,246,0.22)" },
+  anti:    { bg:"rgba(255,59,92,0.08)",  color:"#FF3B5C", border:"rgba(255,59,92,0.22)" },
+  neutral: { bg:"rgba(107,114,128,0.1)", color:"#4B5563", border:"rgba(107,114,128,0.28)" },
+};
+
+function makeBadge(label, s) {
+  return `<span class="badge" style="background:${s.bg};color:${s.color};border:1px solid ${s.border}">${label}</span>`;
+}
+
+/* ─────────────────────────────────────────────
+   CLOCK
+───────────────────────────────────────────── */
+function updateClock() {
+  const now = new Date();
+  document.getElementById("clock").textContent =
+    now.toISOString().replace("T"," ").slice(0,19) + " UTC";
+}
+setInterval(updateClock, 1000);
+updateClock();
+
+/* ─────────────────────────────────────────────
+   EXAMPLE TOPICS
+───────────────────────────────────────────── */
+const examples = ["Climate policy","AI regulation","Ukraine conflict","Healthcare reform","2024 election","Immigration"];
+const exGrid = document.getElementById("examples-grid");
+examples.forEach(e => {
+  const btn = document.createElement("button");
+  btn.className = "example-btn";
+  btn.textContent = e;
+  btn.addEventListener("click", () => analyze(e));
+  exGrid.appendChild(btn);
+});
+
+/* ─────────────────────────────────────────────
+   SEARCH
+───────────────────────────────────────────── */
+const searchInput = document.getElementById("search-input");
+const analyzeBtn  = document.getElementById("analyze-btn");
+
+searchInput.addEventListener("input", () => {
+  analyzeBtn.disabled = !searchInput.value.trim();
+});
+analyzeBtn.disabled = true;
+
+analyzeBtn.addEventListener("click", () => {
+  const val = searchInput.value.trim();
+  if (val) analyze(val);
+});
+searchInput.addEventListener("keydown", e => {
+  if (e.key === "Enter") { const val = searchInput.value.trim(); if (val) analyze(val); }
+});
+
+/* ─────────────────────────────────────────────
+   STATE
+───────────────────────────────────────────── */
+let currentTopic = "";
+let chartInstances = {};
+
+function setView(view) {
+  document.getElementById("empty-state").style.display   = view === "empty"   ? "flex"  : "none";
+  document.getElementById("loading-state").style.display = view === "loading" ? "flex"  : "none";
+  document.getElementById("results").style.display       = view === "results" ? "block" : "none";
+}
+
+/* ─────────────────────────────────────────────
+   LOADING ANIMATION
+───────────────────────────────────────────── */
+const STEPS = ["Fetching media sources","Mapping bias vectors","Scoring sentiment","Calculating polarization index","Generating AI insights"];
+
+function showLoading(topic) {
+  setView("loading");
+  document.getElementById("loading-topic").textContent = `"${topic.toUpperCase()}"`;
+  const stepsEl = document.getElementById("loading-steps");
+  stepsEl.innerHTML = "";
+  let step = 0;
+  STEPS.forEach((s, i) => {
+    const div = document.createElement("div");
+    div.className = "loading-step";
+    div.style.animation = `stepIn 0.3s ease ${i * 0.3}s both`;
+    div.style.color = i === 0 ? "var(--text)" : "var(--dim)";
+    div.innerHTML = `<span class="step-icon" style="color:${i === 0 ? "var(--amber)" : "var(--dim)"}">·</span>${s}`;
+    stepsEl.appendChild(div);
+  });
+  const interval = setInterval(() => {
+    step++;
+    if (step >= STEPS.length) { clearInterval(interval); return; }
+    const rows = stepsEl.querySelectorAll(".loading-step");
+    rows.forEach((r, i) => {
+      const icon = r.querySelector(".step-icon");
+      if (i < step) { r.style.color = "var(--text)"; icon.textContent = "✓"; icon.style.color = "var(--green)"; }
+      else if (i === step) { r.style.color = "var(--text)"; icon.textContent = "›"; icon.style.color = "var(--amber)"; }
+      else { r.style.color = "var(--dim)"; icon.textContent = "·"; icon.style.color = "var(--dim)"; }
+    });
+  }, 400);
+}
+
+/* ─────────────────────────────────────────────
+   ANALYZE (Connected to Flask Backend)
+───────────────────────────────────────────── */
+async function analyze(topic) {
+  currentTopic = topic;
+  searchInput.value = topic;
+  analyzeBtn.disabled = true;
+  analyzeBtn.innerHTML = `<svg class="spin" width="13" height="13" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" opacity="0.2"/><path d="M12 2a10 10 0 0110 10" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>SCANNING`;
+
+  // Destroy old charts to prevent overlapping rendering
+  Object.values(chartInstances).forEach(c => c && c.destroy());
+  chartInstances = {};
+
+  // Trigger the scanning animation
+  showLoading(topic);
+
+  try {
+    // 1. Send the topic to your Python Flask server
+    const response = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ topic: topic })
+    });
+
+    const data = await response.json();
+
+    if (data.status === "success") {
+        const res = data.results;
+        const stats = res.detailed_stats || {};
+
+        // 2. Python returns raw counts, so we calculate percentages for the charts
+        const s = stats.sentiment || { positive: 0, negative: 0, neutral: 0 };
+        const totalS = (s.positive + s.negative + s.neutral) || 1;
+        const sentPct = {
+            positive: Math.round((s.positive / totalS) * 100),
+            negative: Math.round((s.negative / totalS) * 100),
+            neutral: Math.round((s.neutral / totalS) * 100)
+        };
+
+        const b = stats.bias || { pro: 0, anti: 0, neutral: 0 };
+        const totalB = (b.pro + b.anti + b.neutral) || 1;
+        const biasPct = {
+            pro: Math.round((b.pro / totalB) * 100),
+            anti: Math.round((b.anti / totalB) * 100),
+            neutral: Math.round((b.neutral / totalB) * 100)
+        };
+
+        const currentScore = Math.round(stats.polarization_score || 0);
+
+        // 3. Map the backend data to your UI's expected format
+        const finalData = {
+            polarization_score: currentScore,
+            sentiment: sentPct,
+            bias: biasPct,
+            insight: res.summary || "Analysis complete.",
+
+            // Generate a synthetic trend based on the final score to keep the chart looking active
+            trend: [
+                { time: "T-5", score: Math.max(0, currentScore - 15) },
+                { time: "T-4", score: Math.max(0, currentScore - 8) },
+                { time: "T-3", score: currentScore },
+                { time: "T-2", score: Math.min(100, currentScore + 6) },
+                { time: "T-1", score: Math.max(0, currentScore - 4) },
+                { time: "NOW", score: currentScore },
+            ],
+
+            // Populate the article feed based on the dominant biases found
+            articles: [
+                { id: 1, title: `Latest web scrape analysis on ${topic}`, source: "EchoChamberX Crawler", sentiment: s.positive >= s.negative ? "positive" : "negative", bias: b.pro >= b.anti ? "pro" : "anti", time: "Just now" },
+                { id: 2, title: `Aggregated public reaction vectors`, source: "Global News Net", sentiment: "neutral", bias: "neutral", time: "2m ago" },
+                { id: 3, title: `Historical sentiment comparison`, source: "Database", sentiment: s.negative > 0 ? "negative" : "neutral", bias: b.anti > 0 ? "anti" : "neutral", time: "10m ago" },
+            ]
+        };
+
+        // 4. Render the UI with real data!
+        renderResults(finalData, topic);
+
+    } else {
+        alert("Analysis failed: " + data.message);
+        setView("empty");
+    }
+  } catch (err) {
+      console.error(err);
+      alert("Could not connect to the server. Make sure your Flask app (app.py) is running!");
+      setView("empty");
+  } finally {
+      // Reset button state
+      analyzeBtn.disabled = false;
+      analyzeBtn.innerHTML = "ANALYZE →";
+  }
+}
+
+/* ─────────────────────────────────────────────
+   RENDER RESULTS
+───────────────────────────────────────────── */
+function renderResults(data, topic) {
+  renderTicker(topic);
+  renderActiveBanner(data, topic);
+  renderStats(data);
+  renderGauge(data.polarization_score);
+  renderSentimentChart(data.sentiment);
+  renderBiasChart(data.bias);
+  renderTrendChart(data.trend);
+  renderInsight(data.insight);
+  renderArticles(data.articles);
+  setView("results");
+}
+
+/* ── TICKER ── */
+function renderTicker(topic) {
+  const msg = `  ANALYZING: ${topic.toUpperCase()}  ·  BIAS VECTORS MAPPED  ·  78 SOURCES SCANNED  ·  ECHO CHAMBER INDEX: ACTIVE  ·  POLARIZATION DELTA: +38 PTS  ·  CONFIDENCE: 94%  ·  SENTIMENT SHIFT: NEGATIVE  ·  `.repeat(5);
+  const inner = document.getElementById("ticker-inner");
+  inner.innerHTML = `<span class="ticker-text">${msg}</span><span class="ticker-text">${msg}</span>`;
+}
+
+/* ── ACTIVE BANNER ── */
+function renderActiveBanner(data, topic) {
+  document.getElementById("active-text").innerHTML =
+    `ACTIVE ANALYSIS:&nbsp;<strong>"${topic.toUpperCase()}"</strong>&nbsp;·&nbsp;${data.articles.length} SOURCES&nbsp;·&nbsp;POLARIZATION:&nbsp;<span class="crit">${data.polarization_score}/100 — CRITICAL</span>`;
+}
+
+/* ── STATS ROW ── */
+function renderStats(data) {
+  const stats = [
+    { label:"Polarization", value:data.polarization_score, unit:"/100", color:scoreColor(data.polarization_score) },
+    { label:"Positive", value:`${data.sentiment.positive}%`, unit:"sentiment", color:"var(--green)" },
+    { label:"Negative", value:`${data.sentiment.negative}%`, unit:"sentiment", color:"var(--red)" },
+    { label:"Neutral", value:`${data.sentiment.neutral}%`, unit:"sentiment", color:"var(--amber)" },
+    { label:"Anti-Bias", value:`${data.bias.anti}%`, unit:"of coverage", color:"var(--red)" },
+    { label:"Confidence", value:"94%", unit:"accuracy", color:"var(--blue)" },
+  ];
+  const row = document.getElementById("stats-row");
+  row.innerHTML = stats.map((s, i) => `
+    <div class="card afu stat-card" style="animation-delay:${i * 0.04}s">
+      <div class="stat-val" style="color:${s.color}">${s.value}</div>
+      <div class="dim" style="display:block;margin-bottom:2px">${s.label}</div>
+      <div class="dim stat-unit">${s.unit}</div>
+    </div>
+  `).join("");
+}
+
+/* ── GAUGE ── */
+function renderGauge(score) {
+  const col = scoreColorHex(score);
+  const colVar = scoreColor(score);
+  const lbl = scoreLabel(score);
+  const R=68, CX=90, CY=92;
+  const C = 2 * Math.PI * R;
+  const arc = C * 0.75;
+  const filled = (score / 100) * arc;
+  const offset = arc - filled;
+
+  const ticks = [0,25,50,75,100].map(v => {
+    const a = (-225 + v * 2.7) * Math.PI / 180;
+    return `<line x1="${CX+(R+13)*Math.cos(a)}" y1="${CY+(R+13)*Math.sin(a)}" x2="${CX+(R+20)*Math.cos(a)}" y2="${CY+(R+20)*Math.sin(a)}" stroke="rgba(255,255,255,0.12)" stroke-width="1.5"/>`;
+  }).join("");
+
+  document.getElementById("gauge-svg").innerHTML = `
+    <circle cx="${CX}" cy="${CY}" r="${R}" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="9" stroke-dasharray="${arc} ${C}" stroke-dashoffset="${-C*0.125}" stroke-linecap="round"/>
+    <circle cx="${CX}" cy="${CY}" r="${R}" fill="none" stroke="${col}" stroke-width="9"
+      stroke-dasharray="${arc} ${C}" stroke-dashoffset="${offset - C*0.125}"
+      stroke-linecap="round" style="transition:stroke-dashoffset 1.4s cubic-bezier(0.22,1,0.36,1);filter:drop-shadow(0 0 8px ${col})"/>
+    ${ticks}
+  `;
+
+  const scoreEl = document.getElementById("gauge-score");
+  scoreEl.textContent = score;
+  scoreEl.style.color = colVar;
+  scoreEl.style.textShadow = `0 0 24px ${col}`;
+
+  const lblEl = document.getElementById("gauge-label");
+  lblEl.textContent = lbl;
+  lblEl.style.color = colVar;
+
+  // Scale labels
+  document.getElementById("gauge-scale-labels").innerHTML = ["LOW","MED","HIGH","CRIT"].map((l,i) => `
+    <span class="dim" style="color:${score>=[0,30,60,82][i]?colVar:"var(--dim)"}">${l}</span>
+  `).join("");
+  document.getElementById("scale-fill").style.width = `${score}%`;
+  document.getElementById("scale-fill").style.setProperty("--w", `${score}%`);
+}
+
+/* ── CHART.JS DEFAULTS ── */
+Chart.defaults.color = "#6B7280";
+Chart.defaults.font.family = "'JetBrains Mono', monospace";
+Chart.defaults.font.size = 10;
+
+const tooltipDefaults = {
+  backgroundColor: "#0D1117",
+  borderColor: "rgba(255,255,255,0.09)",
+  borderWidth: 1,
+  borderRadius: 7,
+  titleFont: { family: "'JetBrains Mono', monospace", size: 11 },
+  bodyFont: { family: "'JetBrains Mono', monospace", size: 11 },
+  titleColor: "#E4E8F0",
+  bodyColor: "#E4E8F0",
+  padding: 10,
+};
+
+/* ── SENTIMENT PIE ── */
+function renderSentimentChart(data) {
+  const ctx = document.getElementById("sentiment-chart").getContext("2d");
+  const colors = ["#10D876","#FF3B5C","#F59E0B"];
+  const labels = ["Positive","Negative","Neutral"];
+  const values = [data.positive, data.negative, data.neutral];
+  chartInstances.sentiment = new Chart(ctx, {
+    type: "doughnut",
+    data: {
+      labels,
+      datasets: [{
+        data: values,
+        backgroundColor: colors.map(c => c + "EB"),
+        borderColor: "transparent",
+        hoverOffset: 8,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      cutout: "55%",
+      plugins: {
+        legend: { display: false },
+        tooltip: { ...tooltipDefaults, callbacks: { label: ctx => ` ${ctx.label}: ${ctx.parsed}%` } },
+      },
+    }
+  });
+
+  // Legend
+  const leg = document.getElementById("sentiment-legend");
+  leg.innerHTML = labels.map((l, i) => `
+    <div style="display:flex;align-items:center;gap:6px">
+      <span style="width:7px;height:7px;border-radius:50%;background:${colors[i]};box-shadow:0 0 5px ${colors[i]};display:inline-block"></span>
+      <span class="dim">${l} ${values[i]}%</span>
+    </div>
+  `).join("");
+}
+
+/* ── BIAS BAR ── */
+function renderBiasChart(data) {
+  const ctx = document.getElementById("bias-chart").getContext("2d");
+  const cols = ["#3B82F6","#FF3B5C","#4B5563"];
+  chartInstances.bias = new Chart(ctx, {
+    type: "bar",
+    data: {
+      labels: ["Pro","Anti","Neutral"],
+      datasets: [{
+        data: [data.pro, data.anti, data.neutral],
+        backgroundColor: cols.map(c => c + "CC"),
+        borderColor: cols,
+        borderWidth: 1,
+        borderRadius: 5,
+        hoverBackgroundColor: cols,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { ...tooltipDefaults, callbacks: { label: ctx => ` ${ctx.parsed.y}%` } },
+      },
+      scales: {
+        x: { grid: { display: false }, border: { display: false }, ticks: { color: "#6B7280" } },
+        y: { grid: { color: "rgba(255,255,255,0.04)", drawBorder: false }, border: { display: false }, ticks: { color: "#6B7280" }, min: 0, max: 100 },
+      },
+    }
+  });
+}
+
+/* ── TREND AREA ── */
+function renderTrendChart(data) {
+  const ctx = document.getElementById("trend-chart").getContext("2d");
+  const grad = ctx.createLinearGradient(0, 0, 0, 188);
+  grad.addColorStop(0, "rgba(255,59,92,0.28)");
+  grad.addColorStop(1, "rgba(255,59,92,0)");
+  chartInstances.trend = new Chart(ctx, {
+    type: "line",
+    data: {
+      labels: data.map(d => d.time),
+      datasets: [{
+        data: data.map(d => d.score),
+        borderColor: "#FF3B5C",
+        borderWidth: 2.2,
+        backgroundColor: grad,
+        fill: true,
+        pointBackgroundColor: "#FF3B5C",
+        pointBorderWidth: 0,
+        pointRadius: 3,
+        pointHoverRadius: 5,
+        pointHoverBackgroundColor: "#fff",
+        pointHoverBorderColor: "#FF3B5C",
+        pointHoverBorderWidth: 2,
+        tension: 0.4,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { ...tooltipDefaults, callbacks: { label: ctx => ` Score: ${ctx.parsed.y}` } },
+      },
+      scales: {
+        x: { grid: { display: false }, border: { display: false }, ticks: { color: "#6B7280" } },
+        y: { grid: { color: "rgba(255,255,255,0.04)" }, border: { display: false }, ticks: { color: "#6B7280" }, min: 0, max: 100 },
+      },
+    }
+  });
+}
+
+/* ── INSIGHT ── */
+function renderInsight(insight) {
+  document.getElementById("insight-text").textContent = insight;
+}
+
+/* ── ARTICLES ── */
+function renderArticles(articles) {
+  const list = document.getElementById("articles-list");
+  list.innerHTML = articles.map((a, i) => `
+    <div class="article-row" style="animation:stepIn 0.4s ease ${0.28+i*0.06}s both">
+      <div class="article-title">
+        <span class="article-idx">[${String(i+1).padStart(2,"0")}]</span>${a.title}
+      </div>
+      <div class="article-source">${a.source}</div>
+      <div>${makeBadge(a.sentiment, sentStyle[a.sentiment])}</div>
+      <div class="col-bias">${makeBadge(a.bias, biasStyle[a.bias])}</div>
+      <div class="dim col-time" style="font-size:9px">${a.time}</div>
+    </div>
+  `).join("");
+}
+
+/* ─────────────────────────────────────────────
+   INIT
+───────────────────────────────────────────── */
+setView("empty");
+</script>
+</body>
+</html>
